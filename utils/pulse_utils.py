@@ -2,7 +2,7 @@
 import numpy as np
 import scipy
 from qutip import *
-from qutip_utils import dsp_utils
+from utils import dsp_utils
 
 # Empty envelopes
 def empty_detuning_envelope(t, args):

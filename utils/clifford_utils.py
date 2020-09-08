@@ -1,6 +1,6 @@
 import numpy as np
 import qutip as qutip
-from qutip_utils import pulse_utils as pulse_utils
+from utils import pulse_utils as pulse_utils
 
 # From Labber's random clifford generator
 def add_singleQ_clifford(index, gate_seq):

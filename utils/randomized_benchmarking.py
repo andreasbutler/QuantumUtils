@@ -4,9 +4,9 @@ import scipy.optimize as opt
 from qutip import *
 from matplotlib import pyplot as plt
 
-from qutip_utils import qutip_utils
-from qutip_utils import pulse_utils
-from qutip_utils import dsp_utils
+from utils import qutip_utils
+from utils import pulse_utils
+from utils import dsp_utils
 
 # From Labber's random clifford generator
 def add_singleQ_clifford(index, gate_seq):

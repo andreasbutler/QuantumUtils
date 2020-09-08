@@ -1,7 +1,7 @@
 import numpy as np
 import qutip as qutip
-from qutip_utils import pulse_utils as pulse_utils
-from qutip_utils import dsp_utils as dsp_utils
+from utils import pulse_utils as pulse_utils
+from utils import dsp_utils as dsp_utils
 
 def generate_clifford_gate_dictionary(pi_pulse_parameters,
                                       pi_half_pulse_parameters,

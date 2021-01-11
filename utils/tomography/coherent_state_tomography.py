@@ -5,6 +5,11 @@ import time as time
 from matplotlib import pyplot as plt
 from scipy import ndimage
 
+import sys
+import os
+sys.path.append(os.path.abspath('../'))
+from math_utils import linear_algebra_utils as linalg_utils
+
 """Utilities for performing photonic coherent state MLE tomography."""
 
 def generate_complex_mesh(max_x, mesh_size):
@@ -57,8 +62,8 @@ def generate_coherent_state_POVM(max_x, mesh_size, dimension, noise_base=None):
     return noisy_POVM, alpha_mesh, xs, ps
 
 
-def extract_G_inv_from_POVM(povm):
-    """Returns the inverse of the sum of the povm elements."""
+def sum_povm_elements(povm):
+    """Sums over povm elements and returns sum"""
     dim = povm[0][0].shape[0]
     povm_sum = qutip.Qobj(np.zeros((dim, dim)))
 
@@ -66,7 +71,15 @@ def extract_G_inv_from_POVM(povm):
         for povm_element in row:
             povm_sum += povm_element
 
-    return qutip.Qobj(np.linalg.inv(np.matrix(povm_sum)))
+    return povm_sum
+
+
+def extract_G_inv_from_POVM(povm):
+    """Returns the inverse of the sum of the povm elements."""
+    povm_sum = sum_povm_elements(povm)
+    G_inv = qutip.Qobj(linalg_utils.svd_inverse(povm_sum))
+
+    return G_inv
 
 
 def evaluate_Q_function(input_state, coherent_state_POVM):
@@ -85,8 +98,8 @@ def evaluate_thermally_noisy_Q_function(input_state, noise_photons, xs, ps):
     mesh_size = xs[1] - xs[0]
     convolution_sigma = (noise_photons / 2)**(1/2) / (mesh_size)
     noisy_Q_function = ndimage.gaussian_filter(ideal_qfunc,
-				                               convolution_sigma,
-				                               mode='nearest')
+                                               convolution_sigma,
+                                               mode='nearest')
     return noisy_Q_function
 
 
@@ -118,8 +131,9 @@ def MLE_update_state_estimate(current_state,
 
     # If we must regularize update, do so
     if identity_mixin > 0:
+        print('oooga')
         dim = current_state.shape[0]
-        identity = qutip.maximally_mixed_dm(dim)
+        identity = dim * qutip.maximally_mixed_dm(dim)
         updated_state = identity_mixin * identity * current_state \
                          + (1 - identity_mixin) * updated_state.unit()
 
@@ -127,11 +141,11 @@ def MLE_update_state_estimate(current_state,
 
 
 def perform_coherent_state_MLE(povm,
-				               measured_POVM_frequencies, 
-				               number_of_iterations, 
-				               rho0=None, 
-				               rho_ideal=None,
-				               identity_mixin=0,
+                               measured_POVM_frequencies, 
+                               number_of_iterations, 
+                               rho0=None, 
+                               rho_ideal=None,
+                               identity_mixin=0,
                                frequency_threshold=0):
     """Performs coherent state MLE given a POVM and the correspondinding
     measured POVM frequencies.
@@ -170,6 +184,7 @@ def perform_coherent_state_MLE(povm,
     intermediate_fidelities = []
     
     # Run MLE
+    print(number_of_iterations)
     for i in range(number_of_iterations):
         R = MLE_evaluate_R(state, 
                            povm, 
@@ -200,8 +215,9 @@ def get_plotting_limits(data_sets):
 
 def plot_images(data_sets, xs, ps, axes, xlabels, ylabels, titles):
     vmin, vmax = get_plotting_limits(data_sets)
-    for i, ax in enumerate(axes):
-        ax.pcolormesh(xs, ps, data_sets[i], vmin=vmin, vmax=vmax)
+    for i, data_set in enumerate(data_sets):
+        ax = axes[i]
+        ax.pcolormesh(xs, ps, data_set, vmin=vmin, vmax=vmax)
         ax.set_xlabel(xlabels[i])
         ax.set_ylabel(ylabels[i])
         ax.set_title(titles[i])
@@ -224,19 +240,25 @@ def plot_coherent_state_tomography_Q_functions(data_Q_function,
     reconstructed_noisy_Q_function = None
     noise_state_Q_function = None
     if noise_photon_number is not None:
-        mesh_size = xs[1] = xs[0]
-        convolution_sigma = (noise_photon_number / 2 )**(1/2) / (mesh_size)
+        mesh_size = xs[1] - xs[0]
+        convolution_sigma = (noise_photon_number / 2)**(1/2) / (mesh_size)
         reconstructed_noisy_Q_function = \
             ndimage.gaussian_filter(ideal_qfunc,
                                     convolution_sigma,
                                     mode='nearest')
+
+        reconstructed_noisy_Q_function = \
+            evaluate_thermally_noisy_Q_function(reconstructed_state,
+                                                noise_photon_number,
+                                                xs,
+                                                ps)
 
         dim = reconstructed_state.shape[0]
         noise_state = qutip.thermal_dm(dim, noise_photon_number)
         noise_state_Q_function = qutip.qfunc(noise_state, xs, ps, g=2)
 
     # Plot the data and the reconstructed data if the noise state was supplied.
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    num_data_sets = 1
     data_sets = [data_Q_function]
     xlabels = ['X']
     ylabels = ['P']
@@ -246,11 +268,15 @@ def plot_coherent_state_tomography_Q_functions(data_Q_function,
         xlabels.append('X')
         ylabels.append('Y')
         titles.append('Reconstructed Noisy Input Data Q Function')
+        num_data_sets = 2
+    fig, ax = plt.subplots(1, num_data_sets, figsize=(5*num_data_sets, 5))
+    if num_data_sets == 1:
+        ax = [ax]
     plot_images(data_sets, xs, ps, ax, xlabels, ylabels, titles)
 
     # Plot the reconstructed ideal Q function and ideal Q function if its
     # provided.
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    num_data_sets = 1
     data_sets = [reconstructed_qfunc]
     xlabels = ['X']
     ylabels = ['P']
@@ -260,21 +286,29 @@ def plot_coherent_state_tomography_Q_functions(data_Q_function,
         xlabels.append('X')
         ylabels.append('Y')
         titles.append('Ideal Input Data Q Function')
+        num_data_sets = 2
+    fig, ax = plt.subplots(1, num_data_sets, figsize=(5*num_data_sets, 5))
+    if num_data_sets == 1:
+        ax = [ax]
     plot_images(data_sets, xs, ps, ax, xlabels, ylabels, titles)
 
     # If the noise data exists plot it next to the ideal noise Q function
     if noise_data is not None:
-	    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-	    data_sets = [noise_data]
-	    xlabels = ['X']
-	    ylabels = ['P']
-	    titles = ['Original Noise Q Function']
-	    if noise_state_Q_function is not None:
-	        data_sets.append(noise_state_Q_function) 
-	        xlabels.append('X')
-	        ylabels.append('Y')
-	        titles.append('Reconstructed Noise Q Function')
-	    plot_images(data_sets, xs, ps, ax, xlabels, ylabels, titles)
+        num_data_sets = 1
+        data_sets = [noise_data]
+        xlabels = ['X']
+        ylabels = ['P']
+        titles = ['Original Noise Q Function']
+        if noise_state_Q_function is not None:
+            data_sets.append(noise_state_Q_function) 
+            xlabels.append('X')
+            ylabels.append('Y')
+            titles.append('Reconstructed Noise Q Function')
+            num_data_sets = 2
+        fig, ax = plt.subplots(1, num_data_sets, figsize=(5*num_data_sets, 5))
+        if num_data_sets == 1:
+            ax = [ax]
+        plot_images(data_sets, xs, ps, ax, xlabels, ylabels, titles)
 
     # Plot the fidelities per iteration if it's provided
     if fidelities is not None:
@@ -283,4 +317,4 @@ def plot_coherent_state_tomography_Q_functions(data_Q_function,
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Fidelity')
         ax.set_title('Fidelity of reconstructed state per iteration')
-	
+    

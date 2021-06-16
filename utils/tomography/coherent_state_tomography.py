@@ -9,6 +9,7 @@ import sys
 import os
 sys.path.append(os.path.abspath('../'))
 from math_utils import linear_algebra_utils as linalg_utils
+from visualization import state_visualization as state_vis
 
 """Utilities for performing photonic coherent state MLE tomography."""
 
@@ -56,6 +57,7 @@ def generate_coherent_state_POVM(max_x, mesh_size, dimension, noise_base=None):
             noisy_POVM_element = 1/np.pi * qutip.displace(dimension, alpha) \
                                      * noise_base \
                                      * qutip.displace(dimension, alpha).dag()
+            noisy_POVM_element = 1/2 * noisy_POVM_element + 1/2 * noisy_POVM_element.dag()
             noisy_POVM_row.append(noisy_POVM_element)
         noisy_POVM.append(noisy_POVM_row)
     
@@ -106,7 +108,8 @@ def evaluate_thermally_noisy_Q_function(input_state, noise_photons, xs, ps):
 def MLE_evaluate_R(state,
                    POVM_mesh, 
                    measured_POVM_frequencies,
-                   frequency_threshold=0):
+                   frequency_threshold=0,
+                   data_threshold=0):
     """Evaluates the iterative state update operator."""
     R = qutip.Qobj(np.zeros(state.shape))
     for i, row in enumerate(POVM_mesh):
@@ -115,7 +118,7 @@ def MLE_evaluate_R(state,
             f_ij = measured_POVM_frequencies[i][j]
             if np.abs(p_ij) > frequency_threshold:
                 R += POVM_ij * f_ij / p_ij
-    return R
+    return 1/2 * R + 1/2 * R.dag()
 
 
 def MLE_update_state_estimate(current_state, 
@@ -123,19 +126,15 @@ def MLE_update_state_estimate(current_state,
                               G_inv,
                               identity_mixin=0):
     """Updates the MLE best estimate state."""
-    updated_state = G_inv * R * current_state * R * G_inv
-    # Explicitly make the returned state Hermitian. This is necessary becase of
-    # possible numerical floating point accuracy issues with the G_inv matrix 
-    # which is calculated from a numpy.linalg.inv call.
-    updated_state = 1/2 * (updated_state + updated_state.dag())
+    R = (1 - identity_mixin) * R
+    if not R.isherm:
+        print('Ooooops')
+    step = 1/2 * G_inv * R * current_state + 1/2 * current_state.dag() * R.dag() * G_inv.dag()
+    step = (1/2 * step + 1/2 * step.dag()).unit()
+    hold = identity_mixin * current_state
+    updated_state = hold + step * (1 - identity_mixin)
 
-    # If we must regularize update, do so
-    if identity_mixin > 0:
-        print('oooga')
-        dim = current_state.shape[0]
-        identity = dim * qutip.maximally_mixed_dm(dim)
-        updated_state = identity_mixin * identity * current_state \
-                         + (1 - identity_mixin) * updated_state.unit()
+    updated_state = 1/2 * updated_state + 1/2 * updated_state.dag()
 
     return updated_state.unit()
 
@@ -146,7 +145,8 @@ def perform_coherent_state_MLE(povm,
                                rho0=None, 
                                rho_ideal=None,
                                identity_mixin=0,
-                               frequency_threshold=0):
+                               frequency_threshold=0,
+                               data_threshold=0):
     """Performs coherent state MLE given a POVM and the correspondinding
     measured POVM frequencies.
 
@@ -182,23 +182,35 @@ def perform_coherent_state_MLE(povm,
         state = rho0
     
     intermediate_fidelities = []
+    bad_states = []
+    traces = []
+    R_mins = []
+    R_maxes = []
     
     # Run MLE
-    print(number_of_iterations)
     for i in range(number_of_iterations):
         R = MLE_evaluate_R(state, 
                            povm, 
                            measured_POVM_frequencies,
-                           frequency_threshold=frequency_threshold)
+                           frequency_threshold=frequency_threshold,
+                           data_threshold=data_threshold)
+        R_mins.append(np.min(np.abs(np.matrix(R))))
+        R_maxes.append(np.max(np.abs(np.matrix(R))))
+        if np.max(np.abs(np.matrix(R))) < 1e-12:
+            print('quite small')
+            print(np.max(np.matrix(R)))
+            bad_states.append(state)
+
         state = MLE_update_state_estimate(state, 
                                           R, 
                                           G_inv, 
                                           identity_mixin=identity_mixin)
         if rho_ideal is not None:
             intermediate_fidelities.append(qutip.fidelity(state, rho_ideal))
+        traces.append(state.tr())
     
     if rho_ideal is not None:
-        return state, intermediate_fidelities
+        return state, intermediate_fidelities, bad_states, traces, R_mins, R_maxes
     
     return state
 
@@ -317,4 +329,42 @@ def plot_coherent_state_tomography_Q_functions(data_Q_function,
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Fidelity')
         ax.set_title('Fidelity of reconstructed state per iteration')
+
+    # Plot the Fock basis amplitudes
+    state_vis.plot_fock_basis_amplitudes(reconstructed_state)
     
+
+### SAVING UTILITIES ####
+def save_povm(path, povm, alphas, xs, ps):
+    """Fine / wide povms take over an hour to generate, thus it's useful to be
+    able to save them and reload them quickly."""
+    povm_arrays = []
+    for row in povm:
+        for povm in row:
+            povm_arrays.append(np.array(povm))
+    povm_arrays = np.array(povm_arrays)
+
+    np.savez(path,
+             povm_arrays,
+             alphas,
+             xs,
+             ps)
+
+
+def load_povm(path):
+    npz = np.load(path)
+    povm_arrays = npz['arr_0']
+    alphas = npz['arr_1']
+    xs = npz['arr_2']
+    ps = npz['arr_3']
+
+    mesh_shape = alphas.shape
+
+    povms = []
+    for povm in povm_arrays:
+        povms.append(qutip.Qobj(povm))
+
+    povms = np.array(povms)
+    povms = np.reshape(povms, mesh_shape)
+    
+    return povms, alphas, xs, ps
